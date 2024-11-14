@@ -6,6 +6,7 @@ from calendly_fetcher.calendly_fetcher import get_calendly_availability, availab
 import time
 import os
 import sys
+import pytz
 
 # For future debugging/reference, see https://chatgpt.com/c/6735efaf-4d14-8012-a7d7-f05c9912e5fc for conversation that helped me write this code.
 
@@ -35,7 +36,9 @@ def get_when2meet_date_range(driver):
             date_lines = date_text.split('\n')
             date_str = date_lines[0]
             try:
+                # convert time into proper timezone
                 date_obj = datetime.strptime(date_str + ' ' + str(datetime.now().year), '%b %d %Y')
+                date_obj = pytz.timezone('America/New_York').localize(date_obj)
                 dates.append(date_obj)
             except ValueError:
                 continue
@@ -106,9 +109,18 @@ def mark_availability(driver, slot_ids):
         try:
             slot_element = driver.find_element(By.ID, slot_id)
             slot_element.click()
-            time.sleep(0.1)  # Small delay to ensure the click registers
+            time.sleep(0.01)  # Small delay to ensure the click registers
         except Exception as e:
             print(f"Could not click slot {slot_id}: {e}")
+
+def parse_availability_data(availability_text_list):
+    availability_list = []
+    for line in availability_text_list:
+        parts = line.replace('Available: ', '').split(' - ')
+        start_time = datetime.fromisoformat(parts[0])
+        end_time = datetime.fromisoformat(parts[1])
+        availability_list.append((start_time, end_time))
+    return availability_list
 
 def main():
     # Open When2Meet and sign in
@@ -118,16 +130,36 @@ def main():
     start_date, end_date = get_when2meet_date_range(driver)
 
     # Adjust start date to be at least current time + 1 hour
-    current_time_plus_one_hour = datetime.now(timezone.utc) + timedelta(hours=1)
-    adjusted_start_date = max(start_date, current_time_plus_one_hour)
+    current_time_plus_one_hour = datetime.now().replace(tzinfo=pytz.timezone(MY_TIMEZONE)) + timedelta(hours=1)
+    adjusted_start_date = max(start_date, current_time_plus_one_hour).replace(tzinfo=pytz.timezone(MY_TIMEZONE))
 
     if end_date <= adjusted_start_date:
         driver.quit()
         raise Exception("End date is not ahead of start date")
     
-    # Fetch availability from Calendly
-    availability = get_calendly_availability(CALENDLY_API_KEY, adjusted_start_date, end_date)
-    availability_list = availability_to_list_of_strings(availability, MY_TIMEZONE)
+    # if the end date is more than 7 days from the start date, we will need to do n availabilities and concatenate them, where n is the number of weeks between the start and end date
+    starts = []
+    ends = []
+    if end_date > adjusted_start_date + timedelta(days=7):
+        # calculate the number of weeks between the start and end date
+        weeks_between_dates = (end_date - adjusted_start_date).days // 7
+        # create a list of availabilities
+        availabilities = []
+        for i in range(weeks_between_dates):
+            # get the start and end date for the current week
+            current_start_date = adjusted_start_date + timedelta(weeks=i)
+            current_end_date = current_start_date + timedelta(weeks=1)
+            starts.append(current_start_date)
+            ends.append(current_end_date)
+    
+    # Fetch availability from Calendly for all the start and end dates
+    availability_text_list = []
+    for start, end in zip(starts, ends):
+        availability = get_calendly_availability(CALENDLY_API_KEY, start, end)
+        availability_text_list.extend(availability_to_list_of_strings(availability, MY_TIMEZONE))
+
+    # Parse availability data
+    availability_list = parse_availability_data(availability_text_list)
 
     # Map your availability to When2Meet slot IDs
     slot_ids = map_availability_to_slots(availability_list)
