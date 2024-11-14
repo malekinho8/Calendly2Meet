@@ -1,210 +1,145 @@
-from __future__ import print_function
-import pickle
-import os.path
-from googleapiclient.discovery import build
-from google_auth_oauthlib.flow import InstalledAppFlow
-from google.auth.transport.requests import Request
-#import pytz
-from bs4 import BeautifulSoup
 from selenium import webdriver
-from selenium.webdriver.common.keys import Keys
-from datetime import datetime,timezone,timedelta
-import requests
-import mydate
+from selenium.webdriver.common.by import By
+from selenium.webdriver.firefox.service import Service
+from datetime import datetime, timedelta, timezone
+from calendly_fetcher.calendly_fetcher import get_calendly_availability, availability_to_list_of_strings, convert_basic_date_to_datetime
+import time
+import os
 import sys
 
-name = 'Ethan Bensman'
-url = sys.argv[1]
-if url == None:
-	print("No URL Given")
-	exit(1)
+# For future debugging/reference, see https://chatgpt.com/c/6735efaf-4d14-8012-a7d7-f05c9912e5fc for conversation that helped me write this code.
 
+USER_NAME = 'Malek Ibrahim'
+CALENDLY_API_KEY = os.getenv('CALENDLY_API_KEY')
+MY_TIMEZONE = 'America/New_York'
 
-SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
+# get the when2meet url from the sys arg position after the script name (i.e., python controller.py <when2meet_url>)
+if len(sys.argv) < 2:
+    raise Exception("Please provide the When2Meet URL as a command-line argument.")
 
-#returns true if a string contains a digit
-def isDate(pDate):
-	for ch in pDate:
-		if ch.isdigit():
-			return True
-	return False
+WHEN2MEET_URL = sys.argv[1]
 
-#Returns the current year
-def getYear(date, time):
-	year = datetime.now().year
-	return year
-	#if datetime.now() > datetime.strptime((date + ' ' + str(year) + '  ' + time), '%b %d %Y %I %p'):
-	#	year += 1
-	#return year
+# function for getting the date range of the When2Meet grid
+def get_when2meet_date_range(driver):
+    # Wait for the grid to load
+    time.sleep(5)
+    
+    # Find date headers
+    date_elements = driver.find_elements(By.XPATH, '//div[@id="GroupGrid"]/div[3]/div')
+    
+    dates = []
+    for date_element in date_elements:
+        date_text = date_element.text.strip()
+        if date_text:
+            # Extract date, e.g., "Nov 17\nSun"
+            date_lines = date_text.split('\n')
+            date_str = date_lines[0]
+            try:
+                date_obj = datetime.strptime(date_str + ' ' + str(datetime.now().year), '%b %d %Y')
+                dates.append(date_obj)
+            except ValueError:
+                continue
+    
+    if dates:
+        start_date = min(dates)
+        end_date = max(dates) + timedelta(days=1)  # Assuming end_date is inclusive
+    else:
+        raise Exception("Could not extract dates from When2Meet")
+    
+    return start_date, end_date
 
-#gets list of events for date range in calendar
-def getEvents(dates,times):
-	"""Shows basic usage of the Google Calendar API.
-	Prints the start and name of the next 10 events on the user's calendar.
-	"""
-	creds = None
-	# The file token.pickle stores the user's access and refresh tokens, and is
-	# created automatically when the authorization flow completes for the first
-	# time.
-	if os.path.exists('token.pickle'):
-		with open('token.pickle', 'rb') as token:
-			creds = pickle.load(token)
-	# If there are no (valid) credentials available, let the user log in.
-	if not creds or not creds.valid:
-		if creds and creds.expired and creds.refresh_token:
-			creds.refresh(Request())
-		else:
-			flow = InstalledAppFlow.from_client_secrets_file(
-				'credentials.json', SCOPES)
-			creds = flow.run_local_server(port=0)
-		# Save the credentials for the next run
-		with open('token.pickle', 'wb') as token:
-			pickle.dump(creds, token)
+def parse_availability_data(availability_text):
+    availability_list = []
+    lines = availability_text.strip().split('\n')
+    for line in lines:
+        parts = line.replace('Available: ', '').split(' - ')
+        start_time = datetime.fromisoformat(parts[0])
+        end_time = datetime.fromisoformat(parts[1])
+        availability_list.append((start_time, end_time))
+    return availability_list
 
-	service = build('calendar', 'v3', credentials=creds)
+def open_when2meet(url, user_name):
+    driver = webdriver.Firefox()
 
+    driver.get(url)
 
-	#creates datetime objects from string dates given
-	start_time = (datetime.strptime((dates[0] + ' ' + str(getYear(dates[0],times[0])) + ' ' + times[0]), '%b %d %Y %I %p')).isoformat('T')+ "Z"
-	# print(times)
-	# print(((dates[len(dates)-1] + ' ' + str(getYear(dates[len(dates)-1],times[len(dates)-1])) + '  ' + times[len(times)-1])))
-	# exit(1)
-	end_time = None
-	if times[len(times)-1] != "M":
-		end_time = (datetime.strptime((dates[len(dates)-1] + ' ' + str(getYear(dates[len(dates)-1],times[len(dates)-1])) + '  ' + times[len(times)-1]), '%b %d %Y %I %p')+timedelta(days=1)).isoformat('T')+ "Z"
-	else:
-		end_time = (datetime.strptime((dates[len(dates)-1] + ' ' + str(getYear(dates[len(dates)-1],times[len(dates)-1])) + '  ' + "12 AM"), '%b %d %Y %I %p')+timedelta(days=1)).isoformat('T')+ "Z"
+    # Wait for the name input to be present
+    time.sleep(5)
 
-	#end_time = (datetime.strptime((dates[len(dates)-1] + ' ' + str(getYear(dates[len(dates)-1],times[len(dates)-1])) + '  11 PM'), '%b %d %Y %I %p')).isoformat('T')+ "Z"
+    # Enter the user name
+    name_input = driver.find_element(By.ID, 'name')
+    name_input.send_keys(user_name)
 
+    # Click the Sign In button
+    sign_in_button = driver.find_element(By.XPATH, '//*[@id="SignIn"]/div/div/input')
+    sign_in_button.click()
 
-	# Call the Calendar API
-	#now = datetime.utcnow().isoformat() + 'Z' # 'Z' indicates UTC time
-	# page_token = None
-	# while True:
-	# 	calendar_list = service.calendarList().list(pageToken=page_token).execute()
-	# 	for calendar_list_entry in calendar_list['items']:
-	# 		print(calendar_list_entry['summary'])
-	# 	page_token = calendar_list.get('nextPageToken')
-	# 	if not page_token:
-	# 		break
-	events_result = service.events().list(calendarId='primary', timeMin=start_time, timeMax=end_time,
-										singleEvents=True,
-										orderBy='startTime').execute()
-	events = events_result.get('items', [])
+    # Wait for the availability grid to load
+    time.sleep(5)
 
-	# events_result = service.events().list(calendarId='Meetings', timeMin=start_time, timeMax=end_time,
-	# 									singleEvents=True,
-	# 									orderBy='startTime').execute()
-	# events.extend(events_result)
+    return driver
 
-	if not events:
-		print('No upcoming events found.')
-	rlist = []
-	for event in events:
-		start = event['start'].get('dateTime', event['start'].get('date'))
-		end = event['end'].get('dateTime', event['end'].get('date'))
-		print(start, end, event['summary'])
-		#if it's an all day event, add it to the list of items to be removed from the list of dates
-		#this was done assuming all-day events are used as more of a reminder than an actual all-day event
-		if len(start) < 11:
-			rlist.append(event)
-	#remove all day events from events list
-	for event in rlist:
-		events.remove(event)
-	return events
+def map_availability_to_slots(availability_list):
+    slot_ids = []
+
+    for start_time, end_time in availability_list:
+        current_time = start_time
+        while current_time < end_time:
+            # Ensure current_time is timezone-aware
+            if current_time.tzinfo is None:
+                current_time = current_time.replace(tzinfo=timezone.utc)
+            else:
+                current_time = current_time.astimezone(timezone.utc)
+
+            # Convert current_time to Unix timestamp in seconds
+            timestamp = int(current_time.timestamp())
+
+            slot_id = f'YouTime{timestamp}'
+            slot_ids.append(slot_id)
+
+            current_time += timedelta(minutes=15)  # Move to the next 15-minute slot
+
+    return slot_ids
+
+def mark_availability(driver, slot_ids):
+    for slot_id in slot_ids:
+        try:
+            slot_element = driver.find_element(By.ID, slot_id)
+            slot_element.click()
+            time.sleep(0.1)  # Small delay to ensure the click registers
+        except Exception as e:
+            print(f"Could not click slot {slot_id}: {e}")
 
 def main():
-	driver = webdriver.Chrome()
-	driver.get(url)
+    # Open When2Meet and sign in
+    driver = open_when2meet(WHEN2MEET_URL, USER_NAME)
 
-	moreDates = True
-	i = 1
-	dates = []
+    # get the start and end date of the When2Meet grid
+    start_date, end_date = get_when2meet_date_range(driver)
 
-	#this gets dates polled for by when2meet
-	while moreDates:
-		try:
-			element = driver.find_element_by_xpath(('//*[@id="GroupGrid"]/div[3]/div[' + str(i) +']'))
-			block = element.text
-			date = (block.split("\n"))[0]
-			i+=1
-			if isDate(date):
-				dates.append(date)
-		except:
-			moreDates = False
+    # Adjust start date to be at least current time + 1 hour
+    current_time_plus_one_hour = datetime.now(timezone.utc) + timedelta(hours=1)
+    adjusted_start_date = max(start_date, current_time_plus_one_hour)
 
-	#gets times polled for by when2meet
-	moreTimes = True
-	i = 4
-	times = []
-	while moreTimes:
-		try:
-			element = driver.find_element_by_xpath(('//*[@id="GroupGrid"]/div[2]/div['+str(i)+']/div/div'))
-			block = element.text
-			time = (block.split("M"))[0]+"M"
-			if "Noon" in time:
-				time = "12 PM"
-			i+=4
-			times.append(time)
-		except:
-			moreTimes = False
+    if end_date <= adjusted_start_date:
+        driver.quit()
+        raise Exception("End date is not ahead of start date")
+    
+    # Fetch availability from Calendly
+    availability = get_calendly_availability(CALENDLY_API_KEY, adjusted_start_date, end_date)
+    availability_list = availability_to_list_of_strings(availability, MY_TIMEZONE)
 
+    # Map your availability to When2Meet slot IDs
+    slot_ids = map_availability_to_slots(availability_list)
 
+    # Mark your availability on When2Meet
+    mark_availability(driver, slot_ids)
 
-	events = getEvents(dates,times)
-	myEvents = []
-	for event in events:
-		startstr = event['start'].get('dateTime', event['start'].get('date'))
-		#print(startstr)
-		endstr = event['end'].get('dateTime', event['end'].get('date'))
-		start = datetime.strptime(startstr, '%Y-%m-%dT%H:%M:%f%z').replace(tzinfo=None)
-		end = datetime.strptime(endstr, '%Y-%m-%dT%H:%M:%f%z').replace(tzinfo=None)
-		myEvents.append(mydate.myDate(start,end))
+    print("Availability has been marked on When2Meet.")
 
-	
-	element = driver.find_element_by_xpath(('//*[@id="name"]'))
-	element.send_keys(name)
-	element = driver.find_element_by_xpath('//*[@id="SignIn"]/div/div/input')
-	element.click()
-
-
-	r = requests.get(url)
-	bsObj = BeautifulSoup(r.text, "html.parser")
-	#gets the ids of all the clickable time divs in order
-	cells = [x.get("id") for x in bsObj.findAll("div", id=lambda x: x and x.startswith('YouTime'))]
-
-	grid = [[] for date in dates]
-	print(grid)
-
-	#makes a 2-D array resembling the grid of the when2meet site
-	for idx,cell in enumerate(cells):
-		grid[idx%len(dates)].append(cell)
-	
-	dic = {}
-
-	#marks which id's are associated with times i'm free
-	for rIdx, row in enumerate(grid):
-		for cIdx, num in enumerate(row):
-			starttime = (datetime.strptime((dates[rIdx] + ' ' + str(getYear(dates[rIdx],times[0])) + '  ' + times[0]), '%b %d %Y %I %p') + timedelta(minutes=15*cIdx))
-			endtime = (starttime + timedelta(minutes=15))	#add 15 minute cushion to start and end of each event
-			dic[num] = True
-			for myEvent in myEvents:
-				if myEvent.inDate(starttime,endtime) == True:
-					dic[num] = False
-
-	#clicks divs where I'm free
-	for element in dic.keys():
-		if dic[element] == True:
-			el = driver.find_element_by_xpath(('//*[@id="' + element + '"]'))
-			try:
-				el.click()
-			except:
-				print("UH OH")
-				pass
-	#keeps website open for review until process ended
-	while True:
-		pass
+    # Keep the browser open for review
+    input("Press Enter to close the browser...")
+    driver.quit()
 
 if __name__ == "__main__":
-	main()
+    main()

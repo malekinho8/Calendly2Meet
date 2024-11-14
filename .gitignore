@@ -1,3 +1,6 @@
 js/com.sh
 token.pickle
 credentials.json
+
+__pycache__/
+js/
