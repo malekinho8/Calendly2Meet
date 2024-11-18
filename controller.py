@@ -172,8 +172,6 @@ def main():
 
     print("Availability has been marked on When2Meet.")
 
-    # Keep the browser open for review
-    input("Press Enter to close the browser...")
     driver.quit()
 
 if __name__ == "__main__":
