@@ -1,6 +1,6 @@
 # Calendly2Meet
 
-A repository that automates filling out when2meet's with your google calendar.
+A repository that automates filling out a when2meet using the Calendly API.
 
 ## Directions
 
