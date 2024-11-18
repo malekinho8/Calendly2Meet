@@ -151,6 +151,9 @@ def main():
             current_end_date = current_start_date + timedelta(weeks=1)
             starts.append(current_start_date)
             ends.append(current_end_date)
+    else: # if the end date is less than 7 days from the start date, we only need to do one availability
+        starts.append(adjusted_start_date)
+        ends.append(end_date)
     
     # Fetch availability from Calendly for all the start and end dates
     availability_text_list = []
